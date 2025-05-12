@@ -1,0 +1,1 @@
+# 2025-GlobalAzure-Real-Time-Insights-Formula1
