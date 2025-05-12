@@ -1,0 +1,203 @@
+//
+// BRONZE LAYER
+//
+.create table [Bronze_RaceTelemetry]
+(
+    eventData:dynamic, 
+    eventStartTS: long,
+    eventStartDateTime: datetime 
+)
+
+.create table [Bronze_RaceTelemetry] ingestion json mapping 'Bronze_RaceTelemetry_Mapping'
+```
+[
+    {"Column":"eventData", "Properties": {"Path":"$", "datatype": "dynamic"}},
+    {"column":"eventStartTS","path":"$.Timespan.StartTS"},
+    {"column":"eventStartDateTime","path":"$.Timespan.StartTS","transform":"DateTimeFromUnixMilliseconds"}
+]
+```
+
+// Policy: Enable the Ingestion Time policy
+.alter table [Bronze_RaceTelemetry] policy ingestiontime true
+
+// Policy: Enable Ingestion Streaming policy
+.alter table [Bronze_RaceTelemetry] policy streamingingestion enable
+
+
+//
+// SILVER LAYER
+//
+.create-merge table [Silver_RaceTelemetry]
+(
+    ['ChannelId']:string, 
+    ['CarId']:string, 
+    ['SessionId']:long,    
+    ['LapId']:long, 
+    ['SampleCount']:int, 
+    ['Frequency']:int, 
+    ['Timespan']:dynamic,
+    ['StartDateTime']: datetime,
+    ['Data']:dynamic,
+    ['TrackId']:string,
+    ['Track_Circuit']:string,   
+    ['Track_Location']:string,
+    ['Track_Country_IOC_Code']:string,
+    ['Track_Name']:string,
+    ['Track_Length_KM']:real,
+    ['DriverId']:string
+)
+
+// Add description to some of the fields
+.alter table [Silver_RaceTelemetry] column-docstrings (
+   [ChannelId]: "{\"description\": \"The unique identifier of the channel\", \"schema\": [\"null\", \"string\"]}",
+   [CarId]: "{\"description\": \"The unique identifier of the car in format {CarOrdinal}:{CarClass}:{CarPerformanceIndex}\", \"schema\": [\"null\", \"string\"]}",
+   [SessionId]: "{\"description\": \"The unique identifier of the session\", \"schema\": [\"null\", \"string\"]}",
+   [SampleCount]: "{\"description\": \"The number of samples in this batch\"}",
+   [Frequency]: "{\"description\": \"The frequency of the channel\"}"
+);
+
+// Policy: Enable the Ingestion Time policy
+.alter table [Silver_RaceTelemetry] policy ingestiontime true
+
+.alter table [Silver_RaceTelemetry] policy streamingingestion enable
+
+.create-or-alter function 
+with (docstring = '', folder='')
+fnParseBronzeTrackTelemetry()
+{
+    Bronze_RaceTelemetry
+    | where isnotempty(eventData.ChannelId)
+    | extend TrackId = toint(eventData["TrackId"])
+    | join kind=leftouter hint.strategy = broadcast Reference_Tracks on $left.TrackId == $right.TrackOrdinal  
+    | extend ChannelId = tostring(eventData.ChannelId)
+    | extend CarId = tostring(eventData.CarId)
+    | extend SessionId = tolong(eventData.SessionId)    
+    | extend LapId = tolong(eventData.LapId)
+    | extend SampleCount = toint(eventData.SampleCount)
+    | extend Frequency = toint(eventData.Frequency)
+    | extend Timespan = todynamic(eventData.Timespan)
+    | extend Data = todynamic(eventData.Data)
+    | extend TrackId = tostring(eventData.TrackId)
+    | extend Track_Circuit = Circuit
+    | extend Track_Location = Location
+    | extend Track_Country_IOC_Code = IOC_Code
+    | extend Track_Name = Track
+    | extend Track_Length_KM = Length_in_km
+    | extend DriverId = tostring(eventData.DriverId)
+    | project ChannelId, CarId, SessionId, LapId, SampleCount, Frequency, Timespan, StartDateTime = eventStartDateTime, Data,
+        TrackId, 
+        Track_Circuit, 
+        Track_Location,
+        Track_Country_IOC_Code, 
+        Track_Name,
+        Track_Length_KM,
+        DriverId
+}
+
+// Policy: Disable Ingestion Streaming policy
+.alter table [Bronze_RaceTelemetry] policy streamingingestion disable
+
+// Policy: Update the table with the function
+.alter table [Silver_RaceTelemetry] policy update 
+```
+[{
+    "Source": "Bronze_RaceTelemetry", 
+    "Query": "fnParseBronzeTrackTelemetry()", 
+    "IsEnabled": true, 
+    "IsTransactional": true,
+    "PropagateIngestionProperties": true
+}]
+```
+
+// Policy: Enable Ingestion Streaming policy
+.alter table [Bronze_RaceTelemetry] policy streamingingestion enable
+
+
+.create-merge table [Silver_LapSignal]
+(
+    ['TrackId']:string,
+    ['Track_Circuit']:string,   
+    ['Track_Location']:string,
+    ['Track_Country_IOC_Code']:string,
+    ['Track_Name']:string,
+    ['Track_Length_KM']:real,
+    ['CarId']:string, 
+    ['SessionId']:long,    
+    ['LapId']:long, 
+    ['Timespan']:dynamic,
+    ['StartDateTime']: datetime,
+    ['DriverId']:string
+)
+
+// Policy: Enable the Ingestion Time policy
+.alter table [Silver_LapSignal] policy ingestiontime true
+
+
+.create-or-alter function with (docstring = '', folder='')
+fnParseBronzeTrackTelemetry_LapSignal()
+{
+    Bronze_RaceTelemetry    
+    | where isempty(eventData.ChannelId)
+    | extend TrackId = toint(eventData["TrackId"])
+    | join kind=leftouter hint.strategy = broadcast Reference_Tracks on $left.TrackId == $right.TrackOrdinal  
+    | extend TrackId = tostring(eventData.TrackId)
+    | extend Track_Circuit = Circuit
+    | extend Track_Location = Location
+    | extend Track_Country_IOC_Code = IOC_Code
+    | extend Track_Name = Track
+    | extend Track_Length_KM = Length_in_km
+    | extend CarId = tostring(eventData.CarId)
+    | extend SessionId = tolong(eventData.SessionId)    
+    | extend LapId = tolong(eventData.LapId)
+    | extend Timespan = todynamic(eventData.Timespan)
+    | extend DriverId = tostring(eventData.DriverId)
+    | project TrackId, 
+        Track_Circuit, 
+        Track_Location,
+        Track_Country_IOC_Code, 
+        Track_Name,
+        Track_Length_KM, 
+        CarId, 
+        SessionId,         
+        LapId, 
+        Timespan, 
+        StartDateTime = eventStartDateTime,
+        DriverId
+}
+
+// Policy: Disable Ingestion Streaming policy
+.alter table [Bronze_RaceTelemetry] policy streamingingestion disable
+
+// Policy: Update the table with the function
+.alter table [Silver_LapSignal] policy update
+```
+[{
+  "IsEnabled": true,
+  "Source": "Bronze_RaceTelemetry",
+  "Query": "fnParseBronzeTrackTelemetry_LapSignal()",
+  "IsTransactional": false,
+  "PropagateIngestionProperties": true,
+}]
+```
+
+// Policy: Enable Ingestion Streaming policy
+.alter table [Bronze_RaceTelemetry] policy streamingingestion enable
+
+
+//
+// GOLD LAYER
+//
+.create async materialized-view with(backfill=true, autoUpdateSchema=true, docstring = "", folder = "") 
+Gold_RaceTelemetry_Deduped on table Silver_RaceTelemetry
+{
+    Silver_RaceTelemetry
+    | summarize arg_max(tolong(Timespan.StartTS), *) by ChannelId, CarId, SessionId
+}
+
+.create materialized-view with(backfill=true, autoUpdateSchema=true, docstring = "", folder = "") 
+Gold_LapSignal_Deduped on table Silver_LapSignal
+{
+    Silver_LapSignal
+    | summarize arg_max(tolong(Timespan.StartTS), *) by CarId, SessionId
+}
+

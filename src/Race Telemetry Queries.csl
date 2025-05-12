@@ -1,0 +1,56 @@
+// Reference tables
+Reference_Cars
+
+Reference_Tracks
+
+
+// Show the different channels available
+Silver_RaceTelemetry
+| distinct ChannelId
+| order by ChannelId asc  
+
+
+// Show mappings for the table
+.show table [Bronze_RaceTelemetry] ingestion mappings
+
+
+// Show policy for ingestion batching
+.show table [Bronze_RaceTelemetry] policy ingestionbatching  
+
+
+// Show ingestion failures
+.show ingestion failures
+| where FailedOn > ago(20m) and OriginatesFromUpdatePolicy == true
+
+
+// Show total number of records in the table for a specific session
+let _sessionId = '241106192839';
+Silver_RaceTelemetry
+| where SessionId == _sessionId
+| count
+
+
+// Show the latest records for a specific session
+Gold_RaceTelemetry_Deduped
+| where SessionId == '241106192839';
+
+
+// Show the latency for the last record ingested for a specific session
+let _sessionId = '241106192839';
+Bronze_RaceTelemetry
+| where eventData.SessionId == _sessionId
+| extend IngestionTime = ingestion_time()
+| extend OriginalTime = unixtime_milliseconds_todatetime(['eventStartTS'])
+| extend Latency = IngestionTime - OriginalTime
+| order by IngestionTime desc
+| take 1
+| project format_timespan(Latency, "mm:ss.sss")
+
+
+// Expand the JSON data so every item is its own for a specific session
+let _sessionId = '241106192839';
+Silver_RaceTelemetry
+| where SessionId == _sessionId
+| where ChannelId == 'Speed'
+| extend ChannelData = parse_json(Data)
+| mv-expand with_itemindex = Index ChannelData
